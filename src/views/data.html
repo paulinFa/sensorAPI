@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Données chambre de Paulin</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+      padding: 0;
+      background: #f9f9f9;
+      text-align: center;
+    }
+    canvas {
+      max-width: 100%;
+      height: auto;
+    }
+    h1 {
+      margin-bottom: 40px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Données de la chambre de Paulin</h1>
+  <canvas id="chart" width="800" height="400"></canvas>
+
+  <script>
+    async function fetchData() {
+      try {
+        const response = await fetch("http://192.168.1.22:8081/api/readings/filter/?localisationId=2");
+        const data = await response.json();
+
+        const grouped = {};
+
+        data.forEach((item) => {
+          const time = new Date(item.timestamp).toLocaleTimeString();
+          if (!grouped[time]) {
+            grouped[time] = { time };
+          }
+
+          if (item.sensor.typeId === 2) {
+            grouped[time].temp = item.value;
+          } else if (item.sensor.typeId === 3) {
+            grouped[time].humid = item.value;
+          }
+        });
+
+        const sortedData = Object.values(grouped).sort(
+          (a, b) => new Date("1970/01/01 " + a.time) - new Date("1970/01/01 " + b.time)
+        );
+
+        renderChart(sortedData);
+      } catch (error) {
+        console.error("Erreur lors de la récupération des données :", error);
+        alert("Erreur lors de la récupération des données. Vérifie que le serveur autorise les requêtes CORS.");
+      }
+    }
+
+    function renderChart(chartData) {
+      const ctx = document.getElementById("chart").getContext("2d");
+
+      const labels = chartData.map(d => d.time);
+      const tempData = chartData.map(d => d.temp);
+      const humidData = chartData.map(d => d.humid);
+
+      new Chart(ctx, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Température (°C)",
+              data: tempData,
+              borderColor: "#ff7300",
+              backgroundColor: "rgba(255,115,0,0.2)",
+              pointRadius: 4,
+              tension: 0.3,
+            },
+            {
+              label: "Humidité (%)",
+              data: humidData,
+              borderColor: "#387908",
+              backgroundColor: "rgba(56,121,8,0.2)",
+              pointRadius: 4,
+              tension: 0.3,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          interaction: {
+            mode: 'nearest',
+            axis: 'x',
+            intersect: false
+          },
+          plugins: {
+            tooltip: {
+              enabled: true,
+              mode: 'index',
+              intersect: false
+            },
+            legend: {
+              position: "top",
+            },
+          },
+          scales: {
+            x: {
+              title: {
+                display: true,
+                text: "Heure",
+              },
+            },
+            y: {
+              title: {
+                display: true,
+                text: "Valeur",
+              },
+            },
+          },
+        },
+      });
+    }
+
+    fetchData();
+  </script>
+</body>
+</html>

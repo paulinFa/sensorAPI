@@ -92,12 +92,12 @@ app.use(express.static(staticDir));
 
 // Nav to users pg by default
 app.get('/', (_: Request, res: Response) => {
-  return res.redirect('/users');
+  return res.redirect('/data');
 });
 
 // Redirect to login if not logged in.
-app.get('/users', (_: Request, res: Response) => {
-  return res.sendFile('users.html', { root: viewsDir });
+app.get('/data', (_: Request, res: Response) => {
+  return res.sendFile('data.html', { root: viewsDir });
 });
 
 

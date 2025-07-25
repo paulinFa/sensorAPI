@@ -13,6 +13,22 @@ interface ReadingBody {
 }
 
 const router = Router();
+router.get(
+  '/filter',
+  async (req: Request, res: Response) => {
+    const { locationId, sensorId } = req.query;
+
+    const parsedLocationId = locationId ? Number(locationId) : undefined;
+    const parsedSensorId = sensorId ? Number(sensorId) : undefined;
+
+    const readings = await ReadingService.findByLocationOrSensor(
+      parsedLocationId,
+      parsedSensorId
+    );
+
+    res.json(readings);
+  }
+);
 
 // GET /readings
 router.get('/', async (_req, res) => {
@@ -104,6 +120,7 @@ router.delete(
     }
   }
 );
+
 
 
 export default router;

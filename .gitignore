@@ -2,3 +2,5 @@
 dist/
 temp/
 **/**/*.log
+src/repos/database.db
+*.db

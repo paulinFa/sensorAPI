@@ -112,5 +112,30 @@ export const ReadingService = {
     });
 
     return deletedCount;
+  },
+findByLocationOrSensor: async (locationId?: number, sensorId?: number) => {
+  const whereSensor: any = {};
+
+  if (locationId !== undefined) {
+    whereSensor.locationId = locationId;
   }
-};
+
+  if (sensorId !== undefined) {
+    whereSensor.id = sensorId;
+  }
+
+  const readings = await Reading.findAll({
+    include: [
+      {
+        model: Sensor,
+        as: 'sensor', // ✅ obligatoire car tu as défini un alias
+        where: whereSensor,
+        required: true,
+      },
+    ],
+  });
+
+  return readings;
+}
+
+}

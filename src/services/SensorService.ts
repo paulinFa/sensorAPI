@@ -1,7 +1,7 @@
 import { SensorType } from '@src/models/SensorType';
 import { Sensor } from '../models/Sensor';
 import { LocationService } from './LocationService';
-import { SensorTypeService } from './sensorTypeService';
+import { SensorTypeService } from './SensorTypeService';
 import createHttpError from 'http-errors';
 
 /**

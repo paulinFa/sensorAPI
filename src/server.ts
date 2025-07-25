@@ -12,6 +12,7 @@ import ENV from '@src/common/constants/ENV';
 import HttpStatusCodes from '@src/common/constants/HttpStatusCodes';
 import { RouteError } from '@src/common/util/route-errors';
 import { NodeEnvs } from '@src/common/constants';
+import cors from 'cors';
 
 
 /******************************************************************************
@@ -38,7 +39,7 @@ app.use(express.urlencoded({extended: true}));
 // if (ENV.NodeEnv === NodeEnvs.Dev) {
 app.use(morgan('dev'));
 // }
-
+app.use(cors());
 // // Security
 // if (ENV.NodeEnv === NodeEnvs.Production) {
 //   // eslint-disable-next-line n/no-process-env

@@ -11,6 +11,7 @@
     "dev": "cross-env NODE_ENV=development ts-node ./src",
     "dev:hot": "nodemon --exec \"npm run dev\" --watch ./src --ext .ts",
     "lint": "eslint 'src/**/*.{ts,tsx}'",
+    "prod": "cross-env NODE_ENV=production ts-node ./src",
     "start": "cross-env NODE_ENV=production node -r ./config.js ./dist",
     "test": "cross-env NODE_ENV=test vitest"
   },

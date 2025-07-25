@@ -2,8 +2,8 @@ import { Router, Request, Response } from 'express';
 import {
   validateSensorTypeParams,
   validateSensorTypeBody,
-} from '../validators/sensorTypeValidator';
-import { SensorTypeService } from '../services/sensorTypeService';
+} from '../validators/SensorTypeValidator';
+import { SensorTypeService } from '../services/SensorTypeService';
 
 interface SensorTypeParams { id: string }
 interface SensorTypeBody { name: string; unit?: string }

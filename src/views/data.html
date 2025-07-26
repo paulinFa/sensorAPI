@@ -23,7 +23,12 @@
   </style>
 </head>
 <body>
+  <div style="margin-bottom: 30px;">
   <h1>Données de la chambre de Paulin</h1>
+  <h1 id="last-values" style="font-size: 1.2em; font-weight: normal; margin-top: 10px;">
+    Chargement des dernières valeurs...
+  </h1>
+</div>
   <canvas id="chart" width="800" height="400"></canvas>
 
   <script>
@@ -72,6 +77,14 @@
       const tempData = chartData.map(d => d.temp);
       const humidData = chartData.map(d => d.humid);
 
+      const last = chartData[chartData.length - 1];
+      const lastValuesH1 = document.getElementById("last-values");
+      lastValuesH1.innerHTML = `
+        Dernière mesure (${last.time}) :
+        Température = <strong>${last.temp ?? 'N/A'} °C</strong>,
+        Humidité = <strong>${last.humid ?? 'N/A'} %</strong>
+      `;
+
       new Chart(ctx, {
         type: "line",
         data: {
@@ -116,7 +129,7 @@
             x: {
               title: {
                 display: true,
-                text: "Heure",
+                text: "Date",
               },
             },
             y: {

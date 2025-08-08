@@ -4,49 +4,36 @@ import { Location } from '../models/Location';
 import { Sensor } from '../models/Sensor';
 import { SensorType } from '../models/SensorType';
 import { SensorService } from './SensorService';
+import sequelize from '@src/repos/SqliteDB'; // ✅ pour les requêtes brutes
+import { Response } from 'express';
 import createHttpError from 'http-errors';
 
 /**
  * Service CRUD pour Reading
  */
 export const ReadingService = {
-  /**
-   * Crée une nouvelle lecture
-   */
-  create: async (
-    sensorId: number,
-    value: number,
-    timestamp: Date
-  ) => {
-
-    return Reading.create({ sensorId, value, timestamp});
+  create: async (sensorId: number, value: number, timestamp: Date) => {
+    return Reading.create({ sensorId, value, timestamp });
   },
 
-  /**
-   * Récupère toutes les lectures, avec le capteur associé
-   */
-   findAll: async () => {
+  findAll: async () => {
     return Reading.findAll({
       include: [{
         model: Sensor,
         as: 'sensor',
-
-        // On n’envoie que l’ID, le nom et le serialNumber du capteur
         attributes: {
           include: ['id', 'name', 'serialNumber'],
-          exclude: ['typeId', 'locationId']  // on retire les clefs plates
+          exclude: ['typeId', 'locationId']
         },
-
-        // On inclut ensuite les deux sous‑associations
         include: [
           {
             model: SensorType,
-            as: 'type',                   // alias défini avec belongsTo
+            as: 'type',
             attributes: ['id', 'name', 'unit']
           },
           {
             model: Location,
-            as: 'location',               // idem
+            as: 'location',
             attributes: ['id', 'name']
           }
         ]
@@ -54,24 +41,16 @@ export const ReadingService = {
     });
   },
 
-  /**
-   * Récupère une lecture par son ID, avec le capteur associé
-   */
   findById: async (id: number) => {
     return Reading.findByPk(id, {
       include: [{
         model: Sensor,
         as: 'sensor',
-        include: [
-          { model: Location, as: 'location' }
-        ]
+        include: [{ model: Location, as: 'location' }]
       }]
     });
   },
 
-  /**
-   * Met à jour une lecture existante
-   */
   update: async (
     id: number,
     data: Partial<Pick<Reading, 'sensorId' | 'value' | 'timestamp'>>
@@ -80,15 +59,13 @@ export const ReadingService = {
     return reading ? reading.update(data) : null;
   },
 
-  /**
-   * Supprime une lecture par son ID
-   */
   delete: async (id: number) => {
     const reading = await Reading.findByPk(id);
     if (!reading) return 0;
     await reading.destroy();
     return 1;
   },
+
   existsById: async (id: number): Promise<boolean> => {
     const record = await Reading.findOne({
       where: { id },
@@ -96,89 +73,68 @@ export const ReadingService = {
     });
     return !!record;
   },
+
   verifyForeignKeys: async (idSensor: number) => {
-    if(idSensor && !SensorService.existsById(idSensor))
+    if (idSensor && !SensorService.existsById(idSensor))
       throw new createHttpError.NotFound(`Sensor with ID ${idSensor} not found`);
     return true;
   },
-    /**
-   * Supprime toutes les readings associées à un sensor donné.
-   * @param sensorId ID du capteur
-   * @returns Nombre de lignes supprimées
-   */
+
   deleteAllBySensorId: async (sensorId: number): Promise<number> => {
-    const deletedCount = await Reading.destroy({
-      where: { sensorId },
-    });
-
-    return deletedCount;
+    return Reading.destroy({ where: { sensorId } });
   },
-findByLocationOrSensor: async (locationId?: number, sensorId?: number) => {
-  const whereSensor: any = {};
 
-  if (locationId !== undefined) {
-    whereSensor.locationId = locationId;
-  }
+  findByLocationOrSensor: async (locationId?: number, sensorId?: number) => {
+    const whereSensor: any = {};
+    if (locationId !== undefined) whereSensor.locationId = locationId;
+    if (sensorId !== undefined) whereSensor.id = sensorId;
 
-  if (sensorId !== undefined) {
-    whereSensor.id = sensorId;
-  }
+    return Reading.findAll({
+      include: [
+        {
+          model: Sensor,
+          as: 'sensor',
+          where: whereSensor,
+          required: true,
+        },
+      ],
+    });
+  },
 
-  const readings = await Reading.findAll({
-    include: [
-      {
-        model: Sensor,
-        as: 'sensor', // ✅ obligatoire car tu as défini un alias
-        where: whereSensor,
-        required: true,
-      },
-    ],
-  });
-
-  return readings;
-},
-async findByLocationOrSensorBinary(
+  /**
+   * Version optimisée : renvoie les lectures en binaire (8 octets par point)
+   * Format : uint32 epoch, int16 temp*10, int16 hum*10
+   */
+  findByLocationOrSensorBinary: async (
     res: Response,
     locationId?: number,
     sensorId?: number,
     fromTs?: number,
     toTs?: number,
     max: number = 2000
-  ) {
+  ) => {
     const where: string[] = [];
     const rep: any = {};
 
-    if (locationId !== undefined) {
-      where.push('s.location_id = :locationId');
-      rep.locationId = locationId;
-    }
-    if (sensorId !== undefined) {
-      where.push('s.id = :sensorId');
-      rep.sensorId = sensorId;
-    }
-    if (fromTs !== undefined) {
-      where.push('r.ts >= to_timestamp(:fromTs)');
-      rep.fromTs = fromTs;
-    }
-    if (toTs !== undefined) {
-      where.push('r.ts < to_timestamp(:toTs)');
-      rep.toTs = toTs;
-    }
+    if (locationId !== undefined) { where.push('s.location_id = :locationId'); rep.locationId = locationId; }
+    if (sensorId !== undefined)   { where.push('s.id = :sensorId'); rep.sensorId = sensorId; }
+    if (fromTs !== undefined)     { where.push("r.timestamp >= datetime(:fromTs, 'unixepoch')"); rep.fromTs = fromTs; }
+    if (toTs !== undefined)       { where.push("r.timestamp < datetime(:toTs, 'unixepoch')");   rep.toTs = toTs; }
 
-    const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const WHERE = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     // 1) Compter
     const [{ cnt }] = await sequelize.query(
-      `SELECT COUNT(*)::bigint AS cnt
-         FROM readings r
-         JOIN sensors s ON s.id = r.sensor_id
-         ${whereSQL}`,
+      `SELECT COUNT(*) AS cnt
+         FROM reading r
+         JOIN sensor s ON s.id = r.sensor_id
+         ${WHERE}`,
       { replacements: rep, type: sequelize.QueryTypes.SELECT }
     ) as any[];
     const total = Number(cnt);
     const stride = Math.max(1, Math.ceil(total / max));
 
-    // 2) Stream paginé
+    // 2) Stream en binaire
     const pageSize = 5000;
     let cursorId = 0, kept = 0, seen = 0;
 
@@ -186,12 +142,11 @@ async findByLocationOrSensorBinary(
       const rows: any[] = await sequelize.query(
         `
         SELECT r.id,
-               EXTRACT(EPOCH FROM r.ts)::bigint AS ts,
-               ROUND(r.temperature*10)::int AS t10,
-               ROUND(r.humidity*10)::int    AS h10
-        FROM readings r
-        JOIN sensors s ON s.id = r.sensor_id
-        ${whereSQL} ${where.length ? 'AND' : 'WHERE'} r.id > :cursorId
+               CAST(strftime('%s', r.timestamp) AS INT) AS ts,
+               ROUND(r.value * 10) AS val10
+        FROM reading r
+        JOIN sensor s ON s.id = r.sensor_id
+        ${WHERE} ${WHERE ? 'AND' : 'WHERE'} r.id > :cursorId
         ORDER BY r.id
         LIMIT :lim
         `,
@@ -207,9 +162,11 @@ async findByLocationOrSensorBinary(
         cursorId = r.id;
 
         if ((seen % stride) === 0) {
+          // Ici j'assume : val10 = température pour typeId 2 ou humidité pour typeId 3
+          // Si tu veux les deux, il faudra ajuster la requête
           buf.writeUInt32LE(Number(r.ts) >>> 0, off); off += 4;
-          buf.writeInt16LE(r.t10, off); off += 2;
-          buf.writeInt16LE(r.h10, off); off += 2;
+          buf.writeInt16LE(r.val10, off);             off += 2;
+          buf.writeInt16LE(0, off);                   off += 2; // placeholder humidité si pas dispo
           kept++;
           if (kept >= max) break;
         }
@@ -222,5 +179,4 @@ async findByLocationOrSensorBinary(
 
     res.end();
   }
-
-}
+};

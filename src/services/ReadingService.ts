@@ -136,6 +136,91 @@ findByLocationOrSensor: async (locationId?: number, sensorId?: number) => {
   });
 
   return readings;
-}
+},
+async findByLocationOrSensorBinary(
+    res: Response,
+    locationId?: number,
+    sensorId?: number,
+    fromTs?: number,
+    toTs?: number,
+    max: number = 2000
+  ) {
+    const where: string[] = [];
+    const rep: any = {};
+
+    if (locationId !== undefined) {
+      where.push('s.location_id = :locationId');
+      rep.locationId = locationId;
+    }
+    if (sensorId !== undefined) {
+      where.push('s.id = :sensorId');
+      rep.sensorId = sensorId;
+    }
+    if (fromTs !== undefined) {
+      where.push('r.ts >= to_timestamp(:fromTs)');
+      rep.fromTs = fromTs;
+    }
+    if (toTs !== undefined) {
+      where.push('r.ts < to_timestamp(:toTs)');
+      rep.toTs = toTs;
+    }
+
+    const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    // 1) Compter
+    const [{ cnt }] = await sequelize.query(
+      `SELECT COUNT(*)::bigint AS cnt
+         FROM readings r
+         JOIN sensors s ON s.id = r.sensor_id
+         ${whereSQL}`,
+      { replacements: rep, type: sequelize.QueryTypes.SELECT }
+    ) as any[];
+    const total = Number(cnt);
+    const stride = Math.max(1, Math.ceil(total / max));
+
+    // 2) Stream paginé
+    const pageSize = 5000;
+    let cursorId = 0, kept = 0, seen = 0;
+
+    while (kept < max) {
+      const rows: any[] = await sequelize.query(
+        `
+        SELECT r.id,
+               EXTRACT(EPOCH FROM r.ts)::bigint AS ts,
+               ROUND(r.temperature*10)::int AS t10,
+               ROUND(r.humidity*10)::int    AS h10
+        FROM readings r
+        JOIN sensors s ON s.id = r.sensor_id
+        ${whereSQL} ${where.length ? 'AND' : 'WHERE'} r.id > :cursorId
+        ORDER BY r.id
+        LIMIT :lim
+        `,
+        { replacements: { ...rep, cursorId, lim: pageSize }, type: sequelize.QueryTypes.SELECT }
+      );
+
+      if (!rows.length) break;
+
+      const buf = Buffer.allocUnsafe(rows.length * 8);
+      let off = 0;
+
+      for (const r of rows) {
+        cursorId = r.id;
+
+        if ((seen % stride) === 0) {
+          buf.writeUInt32LE(Number(r.ts) >>> 0, off); off += 4;
+          buf.writeInt16LE(r.t10, off); off += 2;
+          buf.writeInt16LE(r.h10, off); off += 2;
+          kept++;
+          if (kept >= max) break;
+        }
+        seen++;
+      }
+
+      if (off > 0) res.write(buf.subarray(0, off));
+      if (kept >= max) break;
+    }
+
+    res.end();
+  }
 
 }

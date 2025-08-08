@@ -15,116 +15,109 @@
 </head>
 <body>
 
-  <!-- === Bloc 1 : Chambre (localisationId=2) === -->
+  <!-- === Bloc 1 : Chambre (locationId=2) === -->
   <div class="panel">
     <h1>Données de la chambre de Paulin</h1>
     <div id="last-values-2" class="subtitle">Chargement des dernières valeurs...</div>
     <canvas id="chart-2" width="800" height="380"></canvas>
   </div>
 
-  <!-- === Bloc 2 : Extérieur (localisationId=3) === -->
+  <!-- === Bloc 2 : Extérieur (locationId=4) === -->
   <div class="panel">
     <h1>Température et humidité du salon</h1>
-    <div id="last-values-3" class="subtitle">Chargement des dernières valeurs...</div>
-    <canvas id="chart-3" width="800" height="380"></canvas>
+    <div id="last-values-4" class="subtitle">Chargement des dernières valeurs...</div>
+    <canvas id="chart-4" width="800" height="380"></canvas>
   </div>
 
   <script>
-    // Récupère, groupe (temp/humid par timestamp) et trace un graphe pour une localisation donnée
-    async function buildChartForLocation(localisationId, canvasId, lastValuesId) {
-      try {
-        const url = `http://192.168.1.22:8081/api/readings/filter/?locationId=${localisationId}`;
-        const response = await fetch(url);
-        const data = await response.json();
-
-        // Groupement par timestamp formaté (mm/jj hh:mm:ss)
-        const grouped = {};
-        data.forEach((item) => {
-          const dateObj = new Date(item.timestamp);
-          const time = dateObj.toLocaleString('fr-FR', {
-            day: '2-digit',
-            month: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-          });
-
-          if (!grouped[time]) grouped[time] = { time };
-
-          // Assumptions: typeId 2 = Temp, typeId 3 = Humidité (même logique que ton code)
-          if (item.sensor?.typeId === 2) grouped[time].temp = item.value;
-          else if (item.sensor?.typeId === 3) grouped[time].humid = item.value;
+    // Fonction pour charger les données binaires
+    async function loadBinaryData(locationId, max = 2000) {
+      const params = new URLSearchParams({ locationId, max });
+      const res = await fetch(`http://192.168.1.22:8081/api/readings/filter.bin?${params}`);
+      if (!res.ok) throw new Error(`Erreur ${res.status}`);
+      const buf = await res.arrayBuffer();
+      const dv = new DataView(buf);
+      const N = buf.byteLength / 8;
+      const points = [];
+      for (let i = 0; i < N; i++) {
+        const off = i * 8;
+        const ts  = dv.getUint32(off, true);
+        const t10 = dv.getInt16(off + 4, true);
+        const h10 = dv.getInt16(off + 6, true);
+        points.push({
+          ts,
+          date: new Date(ts * 1000),
+          temperature: t10 / 10,
+          humidity: h10 / 10
         });
-
-        const sorted = Object.values(grouped).sort(
-          (a, b) => new Date("1970/01/01 " + a.time) - new Date("1970/01/01 " + b.time)
-        );
-
-        renderChart(sorted, canvasId, lastValuesId);
-      } catch (e) {
-        console.error("Erreur lors de la récupération des données :", e);
-        alert("Erreur lors de la récupération des données. Vérifie le serveur et le CORS.");
       }
+      return points;
     }
 
-    function renderChart(chartData, canvasId, lastValuesId) {
-      const ctx = document.getElementById(canvasId).getContext("2d");
+    function renderChart(points, canvasId, lastValuesId) {
+      const labels = points.map(p => p.date.toLocaleString('fr-FR'));
+      const temps  = points.map(p => p.temperature);
+      const humids = points.map(p => p.humidity);
 
-      const labels   = chartData.map(d => d.time);
-      const tempData = chartData.map(d => d.temp);
-      const humidData= chartData.map(d => d.humid);
-
-      if (chartData.length) {
-        const last = chartData[chartData.length - 1];
-        const lastDiv = document.getElementById(lastValuesId);
-        lastDiv.innerHTML = `
-          Dernière mesure (${last.time}) :
-          Température = <strong>${last.temp ?? 'N/A'} °C</strong>,
-          Humidité = <strong>${last.humid ?? 'N/A'} %</strong>
-        `;
+      if (points.length) {
+        const last = points[points.length - 1];
+        document.getElementById(lastValuesId).innerHTML =
+          `Dernière mesure (${last.date.toLocaleString('fr-FR')}) :
+           Température = <strong>${last.temperature.toFixed(1)} °C</strong>,
+           Humidité = <strong>${last.humidity.toFixed(1)} %</strong>`;
       }
 
-      new Chart(ctx, {
+      new Chart(document.getElementById(canvasId).getContext("2d"), {
         type: "line",
         data: {
           labels,
           datasets: [
             {
               label: "Température (°C)",
-              data: tempData,
+              data: temps,
               borderColor: "#ff7300",
               backgroundColor: "rgba(255,115,0,0.2)",
-              pointRadius: 3,
-              tension: 0.3,
+              pointRadius: 2,
+              tension: 0.3
             },
             {
               label: "Humidité (%)",
-              data: humidData,
+              data: humids,
               borderColor: "#387908",
               backgroundColor: "rgba(56,121,8,0.2)",
-              pointRadius: 3,
-              tension: 0.3,
-            },
-          ],
+              pointRadius: 2,
+              tension: 0.3
+            }
+          ]
         },
         options: {
           responsive: true,
           interaction: { mode: 'nearest', axis: 'x', intersect: false },
           plugins: {
             tooltip: { enabled: true, mode: 'index', intersect: false },
-            legend: { position: "top" },
+            legend: { position: "top" }
           },
           scales: {
             x: { title: { display: true, text: "Date" } },
-            y: { title: { display: true, text: "Valeur" } },
-          },
-        },
+            y: { title: { display: true, text: "Valeur" } }
+          }
+        }
       });
     }
 
-    // Construit les deux graphes
+    async function buildChartForLocation(locationId, canvasId, lastValuesId) {
+      try {
+        const points = await loadBinaryData(locationId, 2000);
+        renderChart(points, canvasId, lastValuesId);
+      } catch (e) {
+        console.error("Erreur chargement données :", e);
+        document.getElementById(lastValuesId).innerText = "Erreur de chargement";
+      }
+    }
+
+    // Génère les deux graphiques
     buildChartForLocation(2, "chart-2", "last-values-2"); // Chambre
-    buildChartForLocation(4, "chart-3", "last-values-3"); // Extérieur (nouveau)
+    buildChartForLocation(4, "chart-4", "last-values-4"); // Extérieur
   </script>
 </body>
 </html>

@@ -1,21 +1,24 @@
-// === src/services/readingService.ts ===
+// === src/services/ReadingService.ts ===
 import { Reading } from '../models/Reading';
 import { Location } from '../models/Location';
 import { Sensor } from '../models/Sensor';
 import { SensorType } from '../models/SensorType';
 import { SensorService } from './SensorService';
-import sequelize from '@src/repos/SqliteDB'; // ✅ pour les requêtes brutes
+import sequelize from '@src/repos/SqliteDB';
 import { Response } from 'express';
 import createHttpError from 'http-errors';
 
-/**
- * Service CRUD pour Reading
- */
 export const ReadingService = {
+  /**
+   * Crée une nouvelle lecture
+   */
   create: async (sensorId: number, value: number, timestamp: Date) => {
     return Reading.create({ sensorId, value, timestamp });
   },
 
+  /**
+   * Récupère toutes les lectures avec associations
+   */
   findAll: async () => {
     return Reading.findAll({
       include: [{
@@ -41,6 +44,9 @@ export const ReadingService = {
     });
   },
 
+  /**
+   * Lecture par ID
+   */
   findById: async (id: number) => {
     return Reading.findByPk(id, {
       include: [{
@@ -51,6 +57,9 @@ export const ReadingService = {
     });
   },
 
+  /**
+   * Mise à jour par ID
+   */
   update: async (
     id: number,
     data: Partial<Pick<Reading, 'sensorId' | 'value' | 'timestamp'>>
@@ -59,6 +68,9 @@ export const ReadingService = {
     return reading ? reading.update(data) : null;
   },
 
+  /**
+   * Suppression par ID
+   */
   delete: async (id: number) => {
     const reading = await Reading.findByPk(id);
     if (!reading) return 0;
@@ -80,10 +92,16 @@ export const ReadingService = {
     return true;
   },
 
+  /**
+   * Supprime toutes les lectures d'un capteur
+   */
   deleteAllBySensorId: async (sensorId: number): Promise<number> => {
     return Reading.destroy({ where: { sensorId } });
   },
 
+  /**
+   * Lecture classique avec filtres et JSON
+   */
   findByLocationOrSensor: async (locationId?: number, sensorId?: number) => {
     const whereSensor: any = {};
     if (locationId !== undefined) whereSensor.locationId = locationId;
@@ -102,8 +120,9 @@ export const ReadingService = {
   },
 
   /**
-   * Version optimisée : renvoie les lectures en binaire (8 octets par point)
-   * Format : uint32 epoch, int16 temp*10, int16 hum*10
+   * Version optimisée : flux binaire Temp + Humid
+   * Format : uint32 ts, int16 temp*10, int16 humid*10
+   * Valeur manquante = -32768
    */
   findByLocationOrSensorBinary: async (
     res: Response,
@@ -111,7 +130,8 @@ export const ReadingService = {
     sensorId?: number,
     fromTs?: number,
     toTs?: number,
-    max: number = 2000
+    max: number = 2000,
+    bucketSec: number = 60
   ) => {
     const where: string[] = [];
     const rep: any = {};
@@ -119,64 +139,87 @@ export const ReadingService = {
     if (locationId !== undefined) { where.push('s.location_id = :locationId'); rep.locationId = locationId; }
     if (sensorId !== undefined)   { where.push('s.id = :sensorId'); rep.sensorId = sensorId; }
     if (fromTs !== undefined)     { where.push("r.timestamp >= datetime(:fromTs, 'unixepoch')"); rep.fromTs = fromTs; }
-    if (toTs !== undefined)       { where.push("r.timestamp < datetime(:toTs, 'unixepoch')");   rep.toTs = toTs; }
+    if (toTs !== undefined)       { where.push("r.timestamp < datetime(:toTs, 'unixepoch')");    rep.toTs = toTs; }
+
+    // si sensorId absent → temp (2) + humid (3)
+    const filterTypes = sensorId === undefined ? 'AND s.type_id IN (2,3)' : '';
 
     const WHERE = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    // 1) Compter
+    // 1) Compter le nombre de buckets
     const [{ cnt }] = await sequelize.query(
-      `SELECT COUNT(*) AS cnt
-         FROM reading r
-         JOIN sensor s ON s.id = r.sensor_id
-         ${WHERE}`,
-      { replacements: rep, type: sequelize.QueryTypes.SELECT }
-    ) as any[];
-    const total = Number(cnt);
-    const stride = Math.max(1, Math.ceil(total / max));
-
-    // 2) Stream en binaire
-    const pageSize = 5000;
-    let cursorId = 0, kept = 0, seen = 0;
-
-    while (kept < max) {
-      const rows: any[] = await sequelize.query(
-        `
-        SELECT r.id,
-               CAST(strftime('%s', r.timestamp) AS INT) AS ts,
-               ROUND(r.value * 10) AS val10
+      `
+      WITH base AS (
+        SELECT CAST(strftime('%s', r.timestamp) AS INT) AS ts
         FROM reading r
         JOIN sensor s ON s.id = r.sensor_id
-        ${WHERE} ${WHERE ? 'AND' : 'WHERE'} r.id > :cursorId
-        ORDER BY r.id
-        LIMIT :lim
-        `,
-        { replacements: { ...rep, cursorId, lim: pageSize }, type: sequelize.QueryTypes.SELECT }
-      );
+        ${WHERE} ${filterTypes}
+      )
+      SELECT COUNT(DISTINCT ts / :bucketSec) AS cnt
+      FROM base
+      `,
+      { replacements: { ...rep, bucketSec }, type: sequelize.QueryTypes.SELECT }
+    ) as any[];
 
-      if (!rows.length) break;
+    const totalBuckets = Number(cnt) || 0;
+    if (totalBuckets === 0) { res.end(); return; }
 
-      const buf = Buffer.allocUnsafe(rows.length * 8);
+    const stride = Math.max(1, Math.ceil(totalBuckets / max));
+
+    // 2) Récup pivotée
+    const rows: any[] = await sequelize.query(
+      `
+      WITH base AS (
+        SELECT 
+          (CAST(strftime('%s', r.timestamp) AS INT) / :bucketSec) AS bucket,
+          s.type_id AS typeId,
+          AVG(r.value) AS val
+        FROM reading r
+        JOIN sensor s ON s.id = r.sensor_id
+        ${WHERE} ${filterTypes}
+        GROUP BY bucket, typeId
+      ),
+      pivot AS (
+        SELECT 
+          bucket * :bucketSec AS ts,
+          ROUND(10 * MAX(CASE WHEN typeId = 2 THEN val END)) AS t10,
+          ROUND(10 * MAX(CASE WHEN typeId = 3 THEN val END)) AS h10
+        FROM base
+        GROUP BY bucket
+        ORDER BY bucket
+      ),
+      ranked AS (
+        SELECT ts, t10, h10,
+               ROW_NUMBER() OVER (ORDER BY ts) AS rn
+        FROM pivot
+      )
+      SELECT ts, t10, h10
+      FROM ranked
+      WHERE ((rn - 1) % :stride) = 0
+      ORDER BY ts
+      `,
+      { replacements: { ...rep, bucketSec, stride }, type: sequelize.QueryTypes.SELECT }
+    );
+
+    // 3) Stream binaire
+    res.setHeader('Content-Type', 'application/octet-stream');
+    if (!rows.length) { res.end(); return; }
+
+    const CHUNK = 4096;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const slice = rows.slice(i, i + CHUNK);
+      const buf = Buffer.allocUnsafe(slice.length * 8);
       let off = 0;
-
-      for (const r of rows) {
-        cursorId = r.id;
-
-        if ((seen % stride) === 0) {
-          // Ici j'assume : val10 = température pour typeId 2 ou humidité pour typeId 3
-          // Si tu veux les deux, il faudra ajuster la requête
-          buf.writeUInt32LE(Number(r.ts) >>> 0, off); off += 4;
-          buf.writeInt16LE(r.val10, off);             off += 2;
-          buf.writeInt16LE(0, off);                   off += 2; // placeholder humidité si pas dispo
-          kept++;
-          if (kept >= max) break;
-        }
-        seen++;
+      for (const r of slice) {
+        const ts  = (Number(r.ts) >>> 0);
+        const t10 = (r.t10 ?? -32768) | 0;
+        const h10 = (r.h10 ?? -32768) | 0;
+        buf.writeUInt32LE(ts, off); off += 4;
+        buf.writeInt16LE(t10, off); off += 2;
+        buf.writeInt16LE(h10, off); off += 2;
       }
-
-      if (off > 0) res.write(buf.subarray(0, off));
-      if (kept >= max) break;
+      res.write(buf);
     }
-
     res.end();
   }
 };

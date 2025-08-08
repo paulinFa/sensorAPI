@@ -2,122 +2,261 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Données chambre de Paulin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Données – Paulin</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body { font-family: sans-serif; margin: 20px; padding: 0; background: #f9f9f9; text-align: center; }
-    canvas { max-width: 100%; height: auto; }
-    h1 { margin-bottom: 14px; }
-    .panel { margin-bottom: 40px; background: #fff; padding: 16px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.06); }
-    .subtitle { font-size: 1.1em; font-weight: normal; margin-top: 6px; color:#333; }
+    :root { --bg:#f7f7f8; --card:#fff; --muted:#555; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:0; background:var(--bg); color:#111; }
+    header { text-align:center; padding:18px 10px 6px; }
+    .wrap { max-width:1100px; margin:0 auto; padding:10px 16px 40px; }
+    .panel { background:var(--card); border-radius:12px; padding:16px; margin:16px 0 28px; box-shadow:0 2px 10px rgba(0,0,0,.06); }
+    h1 { margin:6px 0 2px; font-size:28px; }
+    h2 { margin:0 0 8px; font-size:20px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; }
+    .ctrl { display:flex; align-items:center; gap:8px; flex-wrap:wrap; color:var(--muted); font-size:14px; }
+    .ctrl input, .ctrl select, .ctrl button { padding:6px 10px; border-radius:8px; border:1px solid #ddd; background:#fff; }
+    .ctrl button { cursor:pointer; }
+    .subtitle { color:var(--muted); margin:6px 0 10px; }
+    canvas { width:100%; height:380px; }
+    .last { font-size:15px; margin:4px 0 10px; }
   </style>
 </head>
 <body>
+  <header>
+    <h1>Données capteurs</h1>
+    <div class="subtitle">Affichage optimisé (flux binaire + décimation)</div>
+  </header>
 
-  <!-- === Bloc 1 : Chambre (locationId=2) === -->
-  <div class="panel">
-    <h1>Données de la chambre de Paulin</h1>
-    <div id="last-values-2" class="subtitle">Chargement des dernières valeurs...</div>
-    <canvas id="chart-2" width="800" height="380"></canvas>
-  </div>
+  <div class="wrap">
 
-  <!-- === Bloc 2 : Extérieur (locationId=4) === -->
-  <div class="panel">
-    <h1>Température et humidité du salon</h1>
-    <div id="last-values-4" class="subtitle">Chargement des dernières valeurs...</div>
-    <canvas id="chart-4" width="800" height="380"></canvas>
+    <!-- ===== Bloc 1 : Chambre (locationId = 2) ===== -->
+    <section class="panel" id="section-2">
+      <h2>Chambre de Paulin</h2>
+      <div class="row ctrl">
+        <label>Période :</label>
+        <select id="range-2">
+          <option value="24h">Dernières 24h</option>
+          <option value="3d">3 jours</option>
+          <option value="7d" selected>7 jours</option>
+          <option value="30d">30 jours</option>
+          <option value="custom">Personnalisé…</option>
+        </select>
+        <span>de</span><input type="datetime-local" id="from-2" disabled>
+        <span>à</span><input type="datetime-local" id="to-2" disabled>
+        <span>max points</span>
+        <input type="number" id="max-2" value="2000" min="100" step="100" style="width:90px">
+        <button id="reload-2">Recharger</button>
+      </div>
+      <div class="last" id="last-values-2">Chargement…</div>
+      <canvas id="chart-2"></canvas>
+    </section>
+
+    <!-- ===== Bloc 2 : Salon/Extérieur (locationId = 4) ===== -->
+    <section class="panel" id="section-4">
+      <h2>Salon</h2>
+      <div class="row ctrl">
+        <label>Période :</label>
+        <select id="range-4">
+          <option value="24h">Dernières 24h</option>
+          <option value="3d">3 jours</option>
+          <option value="7d" selected>7 jours</option>
+          <option value="30d">30 jours</option>
+          <option value="custom">Personnalisé…</option>
+        </select>
+        <span>de</span><input type="datetime-local" id="from-4" disabled>
+        <span>à</span><input type="datetime-local" id="to-4" disabled>
+        <span>max points</span>
+        <input type="number" id="max-4" value="2000" min="100" step="100" style="width:90px">
+        <button id="reload-4">Recharger</button>
+      </div>
+      <div class="last" id="last-values-4">Chargement…</div>
+      <canvas id="chart-4"></canvas>
+    </section>
+
   </div>
 
   <script>
-    // Fonction pour charger les données binaires
-    async function loadBinaryData(locationId, max = 2000) {
-      const params = new URLSearchParams({ locationId, max });
-      const res = await fetch(`http://192.168.1.22:8081/api/readings/filter.bin?${params}`);
-      if (!res.ok) throw new Error(`Erreur ${res.status}`);
-      const buf = await res.arrayBuffer();
-      const dv = new DataView(buf);
-      const N = buf.byteLength / 8;
-      const points = [];
-      for (let i = 0; i < N; i++) {
-        const off = i * 8;
-        const ts  = dv.getUint32(off, true);
-        const t10 = dv.getInt16(off + 4, true);
-        const h10 = dv.getInt16(off + 6, true);
-        points.push({
-          ts,
-          date: new Date(ts * 1000),
-          temperature: t10 / 10,
-          humidity: h10 / 10
-        });
-      }
-      return points;
+    // ====== CONFIG API ======
+    const API_BASE = 'http://192.168.1.22:8081/api/readings';
+
+    // ====== Utils temps ======
+    const nowSec = () => Math.floor(Date.now()/1000);
+    const toLocalInputValue = d => new Date(d).toISOString().slice(0,16); // yyyy-mm-ddThh:mm
+    const fromLocalInputValue = v => Math.floor(new Date(v).getTime()/1000);
+
+    function presetRangeToEpoch(preset) {
+      const end = nowSec();
+      let start = end - 86400;
+      if (preset === '24h') start = end - 86400;
+      else if (preset === '3d') start = end - 3*86400;
+      else if (preset === '7d') start = end - 7*86400;
+      else if (preset === '30d') start = end - 30*86400;
+      return { start, end };
     }
 
-    function renderChart(points, canvasId, lastValuesId) {
-      const labels = points.map(p => p.date.toLocaleString('fr-FR'));
-      const temps  = points.map(p => p.temperature);
-      const humids = points.map(p => p.humidity);
+    // ====== Fetch binaire (8 octets/pt) -> points {date, temperature, humidity} ======
+    async function fetchPoints({ locationId, from, to, max=2000 }) {
+      const params = new URLSearchParams();
+      params.set('locationId', locationId);
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      params.set('max', max);
 
-      if (points.length) {
-        const last = points[points.length - 1];
-        document.getElementById(lastValuesId).innerHTML =
-          `Dernière mesure (${last.date.toLocaleString('fr-FR')}) :
-           Température = <strong>${last.temperature.toFixed(1)} °C</strong>,
-           Humidité = <strong>${last.humidity.toFixed(1)} %</strong>`;
+      const res = await fetch(`${API_BASE}/filter.bin?${params.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const ab = await res.arrayBuffer();
+      const dv = new DataView(ab);
+
+      const N = ab.byteLength / 8;
+      const out = new Array(N);
+      for (let i=0,o=0;i<N;i++,o+=8) {
+        const ts  = dv.getUint32(o, true);
+        const t10 = dv.getInt16(o+4, true);
+        const h10 = dv.getInt16(o+6, true);
+        out[i] = {
+          ts,
+          date: new Date(ts*1000),
+          temperature: t10 === -32768 ? null : t10/10,
+          humidity:    h10 === -32768 ? null : h10/10
+        };
       }
+      return out;
+    }
 
-      new Chart(document.getElementById(canvasId).getContext("2d"), {
-        type: "line",
+    // ====== Chart.js helpers ======
+    function makeChart(ctx, labels, temps, humids) {
+      return new Chart(ctx, {
+        type: 'line',
         data: {
           labels,
           datasets: [
             {
-              label: "Température (°C)",
+              label: 'Température (°C)',
               data: temps,
-              borderColor: "#ff7300",
-              backgroundColor: "rgba(255,115,0,0.2)",
-              pointRadius: 2,
-              tension: 0.3
+              fill: true,
+              pointRadius: 0,
+              tension: 0.25,
+              spanGaps: true,
+              borderColor: '#ff7300',
+              backgroundColor: 'rgba(255,115,0,0.18)'
             },
             {
-              label: "Humidité (%)",
+              label: 'Humidité (%)',
               data: humids,
-              borderColor: "#387908",
-              backgroundColor: "rgba(56,121,8,0.2)",
-              pointRadius: 2,
-              tension: 0.3
+              fill: false,
+              pointRadius: 0,
+              tension: 0.25,
+              spanGaps: true,
+              borderColor: '#3a8a1c',
+              backgroundColor: 'rgba(58,138,28,0.15)'
             }
           ]
         },
         options: {
           responsive: true,
-          interaction: { mode: 'nearest', axis: 'x', intersect: false },
+          interaction: { mode:'nearest', axis:'x', intersect:false },
           plugins: {
-            tooltip: { enabled: true, mode: 'index', intersect: false },
-            legend: { position: "top" }
+            legend: { position: 'top' },
+            tooltip: { mode:'index', intersect:false },
+            decimation: { enabled: true, algorithm: 'lttb', samples: 2000 }
           },
           scales: {
-            x: { title: { display: true, text: "Date" } },
-            y: { title: { display: true, text: "Valeur" } }
+            x: { title: { display:true, text:'Date' }, ticks:{ maxRotation: 0, autoSkip: true } },
+            y: { title: { display:true, text:'Valeur' } }
           }
         }
       });
     }
 
-    async function buildChartForLocation(locationId, canvasId, lastValuesId) {
-      try {
-        const points = await loadBinaryData(locationId, 2000);
-        renderChart(points, canvasId, lastValuesId);
-      } catch (e) {
-        console.error("Erreur chargement données :", e);
-        document.getElementById(lastValuesId).innerText = "Erreur de chargement";
+    async function buildPanel({ locationId, canvasId, lastId, rangeId, fromId, toId, maxId, reloadId }) {
+      // valeurs par défaut (7j)
+      const rangeSel = document.getElementById(rangeId);
+      const fromInp  = document.getElementById(fromId);
+      const toInp    = document.getElementById(toId);
+      const maxInp   = document.getElementById(maxId);
+      const lastDiv  = document.getElementById(lastId);
+      const ctx      = document.getElementById(canvasId).getContext('2d');
+      let chart;
+
+      function setCustomEnabled(enabled) {
+        fromInp.disabled = toInp.disabled = !enabled;
+        if (enabled && !fromInp.value && !toInp.value) {
+          const { start, end } = presetRangeToEpoch('7d');
+          fromInp.value = toLocalInputValue(start*1000);
+          toInp.value   = toLocalInputValue(end*1000);
+        }
       }
+
+      rangeSel.addEventListener('change', () => {
+        setCustomEnabled(rangeSel.value === 'custom');
+      });
+
+      async function reload() {
+        try {
+          let from, to;
+          if (rangeSel.value === 'custom') {
+            from = fromLocalInputValue(fromInp.value);
+            to   = fromLocalInputValue(toInp.value);
+          } else {
+            const p = presetRangeToEpoch(rangeSel.value);
+            from = p.start; to = p.end;
+          }
+          const max = Math.max(100, Number(maxInp.value || 2000));
+          lastDiv.textContent = 'Chargement…';
+
+          const pts = await fetchPoints({ locationId, from, to, max });
+
+          const labels = pts.map(p => p.date.toLocaleString('fr-FR'));
+          const temps  = pts.map(p => p.temperature);
+          const humids = pts.map(p => p.humidity);
+
+          if (pts.length) {
+            const last = pts[pts.length-1];
+            lastDiv.innerHTML =
+              `Dernière mesure (${last.date.toLocaleString('fr-FR')}) :
+               Température = <b>${last.temperature?.toFixed(1) ?? 'N/A'} °C</b>,
+               Humidité = <b>${last.humidity?.toFixed(1) ?? 'N/A'} %</b>`;
+          } else {
+            lastDiv.textContent = 'Aucune donnée';
+          }
+
+          if (chart) chart.destroy();
+          chart = makeChart(ctx, labels, temps, humids);
+        } catch (e) {
+          console.error(e);
+          lastDiv.textContent = 'Erreur de chargement (voir console)';
+        }
+      }
+
+      document.getElementById(reloadId).addEventListener('click', reload);
+      // init
+      setCustomEnabled(false);
+      await reload();
     }
 
-    // Génère les deux graphiques
-    buildChartForLocation(2, "chart-2", "last-values-2"); // Chambre
-    buildChartForLocation(4, "chart-4", "last-values-4"); // Salon
+    // ==== Démarrage : 2 panneaux ====
+    buildPanel({
+      locationId: 2,
+      canvasId: 'chart-2',
+      lastId: 'last-values-2',
+      rangeId: 'range-2',
+      fromId: 'from-2',
+      toId: 'to-2',
+      maxId: 'max-2',
+      reloadId: 'reload-2'
+    });
+
+    buildPanel({
+      locationId: 4,
+      canvasId: 'chart-4',
+      lastId: 'last-values-4',
+      rangeId: 'range-4',
+      fromId: 'from-4',
+      toId: 'to-4',
+      maxId: 'max-4',
+      reloadId: 'reload-4'
+    });
   </script>
 </body>
 </html>

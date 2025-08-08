@@ -27,22 +27,13 @@ router.get('/filter', async (req, res) => {
 // NOUVEL ENDPOINT LÉGER
 // GET /filter.bin?locationId=1&sensorId=2&from=1719800000&to=1719886400&max=2000
 router.get('/filter.bin', async (req, res) => {
-  res.setHeader('Content-Type', 'application/octet-stream');
+  const loc = req.query.locationId ? Number(req.query.locationId) : undefined;
+  const sen = req.query.sensorId ? Number(req.query.sensorId) : undefined;
+  const from = req.query.from ? Number(req.query.from) : undefined;
+  const to = req.query.to ? Number(req.query.to) : undefined;
+  const max = req.query.max ? Number(req.query.max) : 2000;
 
-  const locationId = req.query.locationId ? Number(req.query.locationId) : undefined;
-  const sensorId   = req.query.sensorId   ? Number(req.query.sensorId)   : undefined;
-  const from       = req.query.from       ? Number(req.query.from)       : undefined;
-  const to         = req.query.to         ? Number(req.query.to)         : undefined;
-  const max        = req.query.max        ? Number(req.query.max)        : 2000;
-
-  await ReadingService.findByLocationOrSensorBinary(
-    res,
-    locationId,
-    sensorId,
-    from,
-    to,
-    max
-  );
+  await ReadingService.findByLocationOrSensorBinary(res, loc, sen, from, to, max);
 });
 
 // GET /readings

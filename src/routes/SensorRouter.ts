@@ -1,7 +1,8 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response,NextFunction  } from 'express';
 import {
   validateSensorParams,
   validateSensorBody,
+  validateDeleteReadingsQuery,
 } from '@src/validators/SensorValidator';
 import { SensorService } from '../services/SensorService';
 import { ReadingService } from '@src/services/ReadingService';
@@ -71,13 +72,29 @@ router.delete(
 
 router.delete(
   '/:id/readings',
-  validateSensorParams, // si tu veux valider sensorId
-  async (req: Request<{ id: string }>, res: Response, next) => {
+  validateSensorParams,
+  validateDeleteReadingsQuery, // <— Joi pour from/to
+  async (req: Request<{ id: string }>, res: Response, next: NextFunction) => {
+    try {
       const sensorId = Number(req.params.id);
-      // Optionnel : vérifier que le sensor existe avant
       await SensorService.existsByIdOrThrow(sensorId);
-      const row = await ReadingService.deleteAllBySensorId(sensorId);
-      res.status(204).send(row + " readings delete");
+
+      const { from, to } = req.query as { from?: string; to?: string };
+
+      // Aucun paramètre -> tout supprimer
+      if (!from && !to) {
+        await ReadingService.deleteAllBySensorId(sensorId);
+        return res.status(204).send(); // 204 sans body
+      }
+
+      // Les deux présents (garanti par Joi) -> intervalle [from, to)
+      const fromDate = new Date(from!);
+      const toDate = new Date(to!);
+      await ReadingService.deleteBySensorIdBetween(sensorId, { from: fromDate, to: toDate });
+      return res.status(204).send();
+    } catch (e) {
+      next(e);
+    }
   }
 );
 

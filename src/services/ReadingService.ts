@@ -7,6 +7,7 @@ import { SensorService } from './SensorService';
 import sequelize from '@src/repos/SqliteDB';
 import { Response } from 'express';
 import createHttpError from 'http-errors';
+import { Op } from 'sequelize';
 
 export const ReadingService = {
   /**
@@ -221,5 +222,23 @@ export const ReadingService = {
       res.write(buf);
     }
     res.end();
+  },
+  /**
+   * Supprime les lectures d'un capteur dans un intervalle [from, to)
+   * Inclusif sur 'from', exclusif sur 'to' pour éviter les collisions de bord.
+   */
+  deleteBySensorIdBetween: async (
+    sensorId: number,
+    range: { from: Date; to: Date }
+  ): Promise<number> => {
+    return Reading.destroy({
+      where: {
+        sensorId,
+        timestamp: {
+          [Op.gte]: range.from,
+          [Op.lt]: range.to, // exclusif sur la borne haute
+        },
+      },
+    });
   }
 };

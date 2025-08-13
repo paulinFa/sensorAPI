@@ -73,6 +73,29 @@
       <canvas id="chart-4"></canvas>
     </section>
 
+    <!-- ===== Bloc 3 : Bas (locationId = 6) ===== -->
+  <section class="panel" id="section-6">
+    <h2>Bas</h2>
+    <div class="row ctrl">
+      <label>Période :</label>
+      <select id="range-6">
+        <option value="24h">Dernières 24h</option>
+        <option value="3d">3 jours</option>
+        <option value="7d" selected>7 jours</option>
+        <option value="30d">30 jours</option>
+        <option value="custom">Personnalisé…</option>
+      </select>
+      <span>de</span><input type="datetime-local" id="from-6" disabled>
+      <span>à</span><input type="datetime-local" id="to-6" disabled>
+      <span>max points</span>
+      <input type="number" id="max-6" value="2000" min="100" step="100" style="width:90px">
+      <button id="reload-6">Recharger</button>
+    </div>
+    <div class="last" id="last-values-6">Chargement…</div>
+    <canvas id="chart-6"></canvas>
+  </section>
+
+
   </div>
 
   <script>
@@ -255,6 +278,17 @@
       toId: 'to-4',
       maxId: 'max-4',
       reloadId: 'reload-4'
+    });
+
+    buildPanel({
+      locationId: 6,
+      canvasId: 'chart-6',
+      lastId: 'last-values-6',
+      rangeId: 'range-6',
+      fromId: 'from-6',
+      toId: 'to-6',
+      maxId: 'max-6',
+      reloadId: 'reload-6'
     });
   </script>
 </body>

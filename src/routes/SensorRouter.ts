@@ -7,6 +7,8 @@ import {
 import { SensorService } from '../services/SensorService';
 import { ReadingService } from '@src/services/ReadingService';
 
+const ID_TYPE_TEMP = 2;
+
 interface SensorParams { id: string }
 interface SensorBody {
   name: string;
@@ -21,6 +23,20 @@ router.get('/', async (_req, res) => {
   const list = await SensorService.findAll();
   res.json(list);
 });
+
+router.get(
+  '/:id/lastReading',
+  validateSensorParams,
+  async (req: Request<SensorParams>, res) => {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ message: 'ID invalide' });
+    }
+    const reading = await ReadingService.findLastBySensorId(id,ID_TYPE_TEMP);
+    if (reading) res.json(reading);
+    else res.status(404).json({ message: 'Reading not found' });
+  }
+);
 
 router.get(
   '/:id',

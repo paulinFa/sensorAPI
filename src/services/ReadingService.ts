@@ -277,5 +277,34 @@ export const ReadingService = {
         },
       },
     });
-  }
+  },
+findLastBySensorId: async (
+  sensorId: number,
+  sensorTypeId: number
+) => {
+  return Reading.findOne({
+    where: {
+      sensorId,
+    },
+    include: [
+      {
+        model: Sensor,
+        as: 'sensor',
+        include: [
+          {
+            model: SensorType,
+            as: 'type',
+            where: {
+              id: sensorTypeId, // <- on filtre ici
+            },
+            attributes: [],
+          },
+        ],
+        attributes: [],
+      },
+    ],
+    order: [['timestamp', 'DESC']],
+    attributes: ['id', 'value'],
+  });
+  },
 };

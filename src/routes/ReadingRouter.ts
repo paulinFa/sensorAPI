@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import {
   validateReadingParams,
   validateReadingBody,
+  validateReadingFilterQuery
 } from '../validators/ReadingValidator';
 import { ReadingService } from '../services/ReadingService';
 
@@ -14,27 +15,30 @@ interface ReadingBody {
 
 const router = Router();
 
-// ancien JSON (à garder si tu veux)
-router.get('/filter', async (req, res) => {
-  const { locationId, sensorId } = req.query;
-  const loc = locationId ? Number(locationId) : undefined;
-  const sen = sensorId ? Number(sensorId) : undefined;
+// GET /readings/filter (JSON)
+router.get(
+  '/filter',
+  validateReadingFilterQuery,
+  async (req, res, next) => {
+    try {
+      const f = (req as any).validatedFilter;
+      const data = await ReadingService.findJsonByFilter(f);
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
 
-  const readings = await ReadingService.findByLocationOrSensor(loc, sen);
-  res.json(readings);
-});
-
-// NOUVEL ENDPOINT LÉGER
-// GET /filter.bin?locationId=1&sensorId=2&from=1719800000&to=1719886400&max=2000
-router.get('/filter.bin', async (req, res) => {
-  const loc = req.query.locationId ? Number(req.query.locationId) : undefined;
-  const sen = req.query.sensorId ? Number(req.query.sensorId) : undefined;
-  const from = req.query.from ? Number(req.query.from) : undefined;
-  const to = req.query.to ? Number(req.query.to) : undefined;
-  const max = req.query.max ? Number(req.query.max) : 2000;
-
-  await ReadingService.findByLocationOrSensorBinary(res, loc, sen, from, to, max);
-});
+// GET /readings/filter.bin (binaire)
+router.get(
+  '/filter.bin',
+  validateReadingFilterQuery,
+  async (req, res, next) => {
+    try {
+      const f = (req as any).validatedFilter;
+      await ReadingService.findBinaryByFilter(res, f);
+    } catch (e) { next(e); }
+  }
+);
 
 // GET /readings
 router.get('/', async (_req, res) => {

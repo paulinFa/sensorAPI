@@ -1,13 +1,37 @@
 // === src/services/ReadingService.ts ===
-import { Reading } from '../models/Reading';
 import { Location } from '../models/Location';
-import { Sensor } from '../models/Sensor';
 import { SensorType } from '../models/SensorType';
 import { SensorService } from './SensorService';
+import createHttpError from 'http-errors';
+import { Op, WhereOptions } from 'sequelize';
+import { Reading } from '@src/models/Reading';
+import { Sensor } from '@src/models/Sensor';
 import sequelize from '@src/repos/SqliteDB';
 import { Response } from 'express';
-import createHttpError from 'http-errors';
-import { Op } from 'sequelize';
+import { ReadingFilterNormalized } from '@src/validators/ReadingValidator';
+
+export type JsonResult = Array<{
+  id: number;
+  sensorId: number;
+  timestamp: string; // ISO
+  value: number;
+  sensor?: { id: number; locationId: number; typeId: number };
+}>;
+
+function buildSequelizeWhere(f: ReadingFilterNormalized): {
+  where: WhereOptions;
+  includeSensorWhere: any;
+} {
+  const where: WhereOptions = {};
+  if (f.from && f.to) {
+    where.timestamp = { [Op.gte]: f.from, [Op.lt]: f.to }; // [from, to)
+  }
+  const includeSensorWhere: any = {};
+  if (f.sensorId !== undefined) includeSensorWhere.id = f.sensorId;
+  if (f.locationId !== undefined) includeSensorWhere.locationId = f.locationId;
+
+  return { where, includeSensorWhere };
+}
 
 export const ReadingService = {
   /**
@@ -103,51 +127,66 @@ export const ReadingService = {
   /**
    * Lecture classique avec filtres et JSON
    */
-  findByLocationOrSensor: async (locationId?: number, sensorId?: number) => {
-    const whereSensor: any = {};
-    if (locationId !== undefined) whereSensor.locationId = locationId;
-    if (sensorId !== undefined) whereSensor.id = sensorId;
+  // --- JSON : applique les mêmes filtres que la version binaire ---
+  async findJsonByFilter(
+    f: ReadingFilterNormalized,
+    limit = 5000
+  ): Promise<JsonResult> {
+    const { where, includeSensorWhere } = buildSequelizeWhere(f);
 
-    return Reading.findAll({
-      include: [
-        {
-          model: Sensor,
-          as: 'sensor',
-          where: whereSensor,
-          required: true,
-        },
-      ],
+    const rows = await Reading.findAll({
+      where: {
+        ...where,
+        ...(f.sensorId !== undefined ? { sensorId: f.sensorId } : {}),
+      },
+      include: [{
+        model: Sensor,
+        as: 'sensor',
+        required: true,
+        where: includeSensorWhere,
+        attributes: ['id', 'locationId', 'typeId'],
+      }],
+      order: [['timestamp', 'ASC']],
+      limit,
     });
+
+    return rows.map(r => ({
+      id: r.id,
+      sensorId: r.sensorId,
+      timestamp: r.timestamp.toISOString(),
+      value: r.value,
+      sensor: r.sensor ? {
+        id: r.sensor.id,
+        locationId: (r.sensor as any).locationId,
+        typeId: (r.sensor as any).typeId,
+      } : undefined,
+    }));
   },
 
   /**
-   * Version optimisée : flux binaire Temp + Humid
-   * Format : uint32 ts, int16 temp*10, int16 humid*10
-   * Valeur manquante = -32768
+   * Version binaire — identique à la tienne mais prend un objet `f` commun
+   * Format : uint32 ts, int16 temp*10, int16 humid*10 ; manquant = -32768
+   * Règle : si sensorId absent -> renvoie types 2 et 3 pivotés.
    */
-  findByLocationOrSensorBinary: async (
+  async findBinaryByFilter(
     res: Response,
-    locationId?: number,
-    sensorId?: number,
-    fromTs?: number,
-    toTs?: number,
-    max: number = 2000,
-    bucketSec: number = 60
-  ) => {
+    f: ReadingFilterNormalized
+  ): Promise<void> {
+    const max = f.max ?? 2000;
+    const bucketSec = f.bucketSec ?? 60;
+
     const where: string[] = [];
     const rep: any = {};
 
-    if (locationId !== undefined) { where.push('s.location_id = :locationId'); rep.locationId = locationId; }
-    if (sensorId !== undefined)   { where.push('s.id = :sensorId'); rep.sensorId = sensorId; }
-    if (fromTs !== undefined)     { where.push("r.timestamp >= datetime(:fromTs, 'unixepoch')"); rep.fromTs = fromTs; }
-    if (toTs !== undefined)       { where.push("r.timestamp < datetime(:toTs, 'unixepoch')");    rep.toTs = toTs; }
+    if (f.locationId !== undefined) { where.push('s.location_id = :locationId'); rep.locationId = f.locationId; }
+    if (f.sensorId !== undefined)   { where.push('s.id = :sensorId'); rep.sensorId = f.sensorId; }
+    if (f.from !== undefined)       { where.push("r.timestamp >= :from"); rep.from = f.from.toISOString(); }
+    if (f.to !== undefined)         { where.push("r.timestamp < :to");    rep.to = f.to.toISOString(); }
 
-    // si sensorId absent → temp (2) + humid (3)
-    const filterTypes = sensorId === undefined ? 'AND s.type_id IN (2,3)' : '';
-
+    const filterTypes = f.sensorId === undefined ? 'AND s.type_id IN (2,3)' : '';
     const WHERE = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    // 1) Compter le nombre de buckets
+    // 1) Compte les buckets
     const [{ cnt }] = await sequelize.query(
       `
       WITH base AS (
@@ -156,22 +195,21 @@ export const ReadingService = {
         JOIN sensor s ON s.id = r.sensor_id
         ${WHERE} ${filterTypes}
       )
-      SELECT COUNT(DISTINCT ts / :bucketSec) AS cnt
-      FROM base
+      SELECT COUNT(DISTINCT ts / :bucketSec) AS cnt FROM base
       `,
       { replacements: { ...rep, bucketSec }, type: sequelize.QueryTypes.SELECT }
     ) as any[];
 
     const totalBuckets = Number(cnt) || 0;
-    if (totalBuckets === 0) { res.end(); return; }
+    if (totalBuckets === 0) { res.setHeader('Content-Type', 'application/octet-stream'); res.end(); return; }
 
     const stride = Math.max(1, Math.ceil(totalBuckets / max));
 
-    // 2) Récup pivotée
+    // 2) Pivot + échantillonnage
     const rows: any[] = await sequelize.query(
       `
       WITH base AS (
-        SELECT 
+        SELECT
           (CAST(strftime('%s', r.timestamp) AS INT) / :bucketSec) AS bucket,
           s.type_id AS typeId,
           AVG(r.value) AS val
@@ -181,7 +219,7 @@ export const ReadingService = {
         GROUP BY bucket, typeId
       ),
       pivot AS (
-        SELECT 
+        SELECT
           bucket * :bucketSec AS ts,
           ROUND(10 * MAX(CASE WHEN typeId = 2 THEN val END)) AS t10,
           ROUND(10 * MAX(CASE WHEN typeId = 3 THEN val END)) AS h10
@@ -190,8 +228,7 @@ export const ReadingService = {
         ORDER BY bucket
       ),
       ranked AS (
-        SELECT ts, t10, h10,
-               ROW_NUMBER() OVER (ORDER BY ts) AS rn
+        SELECT ts, t10, h10, ROW_NUMBER() OVER (ORDER BY ts) AS rn
         FROM pivot
       )
       SELECT ts, t10, h10
